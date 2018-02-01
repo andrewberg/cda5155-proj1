@@ -74,9 +74,9 @@ class Config:
 			elif i is 4:
 				self.page_size = value
 			elif i is 5:
-				self.num_sets_data = value
+				self.num_sets_data = int(value)
 			elif i is 6:
-				self.set_size_data = value
+				self.set_size_data = int(value)
 			elif i is 7:
 				self.line_size = value
 			elif i is 8:
@@ -140,8 +140,8 @@ class Config:
 
 		# data cache info
 		
-		print("D-cache contains " + self.num_sets_data + " sets.")
-		print("Each set contains " + self.set_size_data + " entries.")
+		print("D-cache contains " + str(self.num_sets_data) + " sets.")
+		print("Each set contains " + str(self.set_size_data) + " entries.")
 		print("Each line is " + self.line_size + " sets.")
 		print("Number of bits used for the index is "+ str(self.d_cache_index) + ".")
 		print("Number of bits used for the offset is " + str(self.d_cache_offset) + ".")
@@ -208,6 +208,12 @@ class TraceData:
 			
 			self.data.append(dum)
 
+	"""function to print all of the values in the given results"""
+
+	def print_all(self):
+		for val in self.data:
+			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", "none", val.physical_page, val.dc_tag, val.dc_index, val.dc_res, -1, "none")
+
 	"""function to calculate different values based on shifts"""
 
 	def calculate_all(self):
@@ -221,7 +227,8 @@ class TraceData:
 			self.calc_dc_index(val)
 			self.calc_dc_tag(val)
 
-			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", "none", -1, val.dc_tag, val.dc_index, "none", -1, "none")
+			self.calc_phys_page(val)
+
 
 	"""function for printing all data (-1 for values not done yet)"""
 
@@ -318,6 +325,19 @@ class TraceData:
 
 		val.dc_tag = res
 
+	"""calculates the physical page number based on physical address"""
+
+	def calc_phys_page(self, val):
+		size = config.pt_offset
+		
+		mask = 2 ** 32 - 1
+		mask = mask << size
+		
+		res = val.add & mask
+		
+		val.physical_page = res >> size
+
+
 """
 	class for storing each trace data entry
 """
@@ -335,17 +355,193 @@ class TraceLine:
 		self.dc_index = -1
 		self.dc_offset = -1
 
+		self.dc_res = "none"
+
+		self.physical_page = -1
+
+"""
+	class for data cache entries
+"""
+
+class DataCacheEntry:
+
+	def __init__(self, v, tag):
+		self.v = v
+		self.tag = tag
+
+		self.lru = 0
+
+	def __str__(self):
+		return str(str(self.v) + " " + str(self.tag))
+
 """
 	Data cache for computing hits/misses
 """
 
 class DataCache:
 
+	def __init__(self, config, data):
+		self.config = config
+		self.data = data
+
+		self.assoc = config.set_size_data
+		self.size = config.num_sets_data
+
+		self.entries = []
+
+		self.init_cache()
+
+		self.do_cache()
+
+	def init_cache(self):
+		
+		for i in xrange(self.size):
+			dum = list()
+			
+			for j in xrange(self.assoc):
+				dum.append(DataCacheEntry(0, -1))
+
+			self.entries.append(dum)
+
+	def print_cache(self):
+		for i in xrange(self.size):
+			print(i),
+
+			for j in xrange(self.assoc):
+				print(self.entries[i][j]),
+
+			print("")
+
+	def do_cache(self):
+		# for each address go through and see if in cache
+		# if not in cache then add in and add to phys page table
+
+		for i in self.data:
+			res = self.find_in_cache(i) 
+
+			if res:
+				i.dc_res = "hit "
+			else:
+				i.dc_res = "miss"
+
+
+	"""given an address goes to the index and sees if tag matches"""
+
+	def find_in_cache(self, entry):
+		
+		cur = entry
+
+		d_set = self.entries[cur.dc_index]
+
+		for i in d_set:
+			if i.v is 1 and cur.dc_tag == i.tag:
+				print("hit")
+
+				self.reset_and_inc(d_set, cur.dc_tag)
+
+				return True
+
+		# miss so must find a place to add in the value
+
+		replace_index = self.find_index_replace(d_set)
+
+		# found place to replace, must get dc_tag and make sure lru is 0 and v is 1
+
+		d_set[replace_index].v = 1
+		d_set[replace_index].lru = 0
+		d_set[replace_index].tag = cur.dc_tag
+
+		return False
+
+	"""function to increment all lru values and reset the one that was just used"""
+
+	def reset_and_inc(self, d_set, reset):
+
+		for i in d_set:
+			if i.v is 1:
+				if i.tag is reset:
+					i.lru = 0
+				else:
+					i.lru = i.lru + 1
+
+
+	"""function to find index of replaceable value in the set"""
+
+	def find_index_replace(self, d_set):
+
+		ind = 0
+
+		# look for a spot that is not valid
+
+		for i in d_set:
+			if i.v is 0:
+				
+				i.v = 1
+
+				return ind
+
+			ind += 1
+
+		# find greatest LRU value and return the index of it in the d_set
+
+		max_val = d_set[0].lru
+		max_ind = 0
+
+		ind = 0
+
+		for i in d_set:
+			if i.lru > max_ind:
+				max_val = i
+				max_ind = ind
+
+			ind += 1
+
+		return max_ind
+
+"""
+	Physical page table class
+"""
+
+class PageTable:
+	def __init__(self, config):
+		self.config = config
+
+		self.size = self.config.num_physical_pages
+		self.pages = list()
+
+		self.init_table()
+
+	def init_table(self):
+		for i in xrange(int(self.size)):
+			self.pages.append(PhysicalPage())
+
+
+
+
+
+"""
+	Physical page table entries class
+	done in a round robin fashion
+	LRU replacement
+"""
+
+class PhysicalPage:
 	def __init__(self):
-		pass
+		self.resident = False
+
+		self.init_accesses = 0
+
+
+
 
 if __name__ == "__main__":
 	config = Config("trace.config")
 
 	data = TraceData(config)
 	data.take_trace()
+
+	dcache = DataCache(config, data.data)
+
+	pagetable = PageTable(config)
+
+	data.print_all()
