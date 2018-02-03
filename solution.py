@@ -212,7 +212,7 @@ class TraceData:
 
 	def print_all(self):
 		for val in self.data:
-			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", "none", val.physical_page, val.dc_tag, val.dc_index, val.dc_res, -1, "none")
+			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", "none", val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
 
 	"""function to calculate different values based on shifts"""
 
@@ -224,10 +224,15 @@ class TraceData:
 			self.calc_p_offset(val)
 			
 			# dc
+			
 			self.calc_dc_index(val)
 			self.calc_dc_tag(val)
 
 			self.calc_phys_page(val)
+
+			# victim cache
+
+			self.calc_victim_tag(val)
 
 
 	"""function for printing all data (-1 for values not done yet)"""
@@ -337,6 +342,20 @@ class TraceData:
 		
 		val.physical_page = res >> size
 
+	"""calculate the victim cache tag"""
+
+	def calc_victim_tag(self, val):
+
+		shift = config.d_cache_offset + config.d_cache_index
+
+		mask = sys.maxint
+		mask = mask << shift
+
+		res = val.add & mask
+
+		res = res >> shift
+
+		val.victim_tag = res
 
 """
 	class for storing each trace data entry
@@ -359,6 +378,10 @@ class TraceLine:
 
 		self.physical_page = -1
 
+		self.victim_tag = -1
+
+		self.victim_res = "miss"
+
 """
 	class for data cache entries
 """
@@ -380,9 +403,11 @@ class DataCacheEntry:
 
 class DataCache:
 
-	def __init__(self, config, data):
+	def __init__(self, config, data, victim):
 		self.config = config
 		self.data = data
+
+		self.victim = victim
 
 		self.assoc = config.set_size_data
 		self.size = config.num_sets_data
@@ -417,6 +442,7 @@ class DataCache:
 		# if not in cache then add in and add to phys page table
 
 		for i in self.data:
+
 			res = self.find_in_cache(i) 
 
 			if res:
@@ -433,23 +459,35 @@ class DataCache:
 
 		d_set = self.entries[cur.dc_index]
 
+		# checks to see if in the victim cache because it was not in data cache
+
+		in_victim_cache = self.victim.find_in_cache(cur)
+
 		for i in d_set:
 			if i.v is 1 and cur.dc_tag == i.tag:
-				print("hit")
 
 				self.reset_and_inc(d_set, cur.dc_tag)
 
 				return True
 
-		# miss so must find a place to add in the value
+		# if replacing a value in data cache must make the value True
 
-		replace_index = self.find_index_replace(d_set)
+		replace_index, evicted = self.find_index_replace(d_set)
+
+		save = d_set[replace_index]
+
+		# add evicted number into the victim cache
+
+		if evicted:
+			victim.add_evicted(save.tag)
 
 		# found place to replace, must get dc_tag and make sure lru is 0 and v is 1
 
 		d_set[replace_index].v = 1
 		d_set[replace_index].lru = 0
 		d_set[replace_index].tag = cur.dc_tag
+
+		# if a block was evicted, store this value in the victim cache
 
 		return False
 
@@ -478,25 +516,25 @@ class DataCache:
 				
 				i.v = 1
 
-				return ind
+				return ind, False
 
 			ind += 1
 
 		# find greatest LRU value and return the index of it in the d_set
 
-		max_val = d_set[0].lru
+		max_val = d_set[0]
 		max_ind = 0
 
 		ind = 0
 
 		for i in d_set:
-			if i.lru > max_ind:
+			if i.lru > max_val.lru:
 				max_val = i
 				max_ind = ind
 
 			ind += 1
 
-		return max_ind
+		return max_ind, True
 
 """
 	Physical page table class
@@ -516,9 +554,6 @@ class PageTable:
 			self.pages.append(PhysicalPage())
 
 
-
-
-
 """
 	Physical page table entries class
 	done in a round robin fashion
@@ -531,17 +566,169 @@ class PhysicalPage:
 
 		self.init_accesses = 0
 
+"""
+	Victim Cache entry class
+"""
 
+class VictimCacheEntry:
+
+	def __init__(self, v, tag):
+		self.v = v
+		self.tag = tag
+
+		self.lru = 0
+
+	def __str__(self):
+		return str(str(self.v) + " " + str(self.tag))
+
+"""
+	victim cache similar to data cache
+"""
+
+class VictimCache:
+
+	def __init__(self, stats, config, data):
+		self.stats = stats
+
+		self.config = config
+		self.data = data
+
+		self.assoc = int(config.set_size_victim)
+		self.size = 1
+
+		self.entries = []
+
+		self.init_cache()
+
+
+	def init_cache(self):
+		
+		for i in xrange(self.size):
+			dum = list()
+			
+			for j in xrange(self.assoc):
+				dum.append(VictimCacheEntry(0, -1))
+
+			self.entries.append(dum)
+
+	def print_cache(self):
+		for i in xrange(self.size):
+			print(i),
+
+			for j in xrange(self.assoc):
+				print(self.entries[i][j]),
+
+			print("")
+
+	"""given an address goes to the index and sees if tag matches"""
+
+	def find_in_cache(self, entry):
+		
+		cur = entry
+
+		d_set = self.entries[0]
+
+		for i in d_set:
+			if i.v is 1 and cur.victim_tag == i.tag:
+				self.reset_and_inc(d_set, cur.victim_tag)
+
+				cur.victim_res = "hit "
+
+				self.stats.v_hit += 1
+
+				return True
+
+		# miss so must find a place to add in the value
+
+		cur.victim_res = "miss"
+
+		self.reset_and_inc(d_set, -5)
+
+		self.stats.v_miss += 1
+
+		return False
+
+	"""function to increment all lru values and reset the one that was just used"""
+
+	def reset_and_inc(self, d_set, reset):
+
+		for i in d_set:
+			if i.v is 1:
+				if i.tag == reset:
+					#i.lru = 0
+					i.v = 0
+					i.tag = -1
+				else:
+					i.lru = i.lru + 1
+
+
+
+	"""function to find index of replaceable value in the set"""
+
+	def find_index_replace(self, d_set):
+
+		ind = 0
+
+		# look for a spot that is not valid
+
+		for i in d_set:
+			if i.v is 0:
+				
+				i.v = 1
+
+				return ind
+
+			ind += 1
+
+		# find greatest LRU value and return the index of it in the d_set
+
+		max_val = d_set[0]
+		max_ind = 0
+
+		ind = 0
+
+		for i in d_set:
+			if i.lru > max_val.lru:
+				max_val = i
+				max_ind = ind
+
+			ind += 1
+
+		return max_ind
+
+	"""function to add the value that you evicted from the data cache"""
+
+	def add_evicted(self, tag):
+		
+		replace_ind = self.find_index_replace(self.entries[0])
+
+		self.entries[0][replace_ind].v = 1
+		self.entries[0][replace_ind].lru = 0
+		self.entries[0][replace_ind].tag = tag
+
+class Statistics:
+
+	def __init__(self):
+		self.v_miss = 0
+		self.v_hit = 0
 
 
 if __name__ == "__main__":
 	config = Config("trace.config")
 
+	stats = Statistics()
+
 	data = TraceData(config)
 	data.take_trace()
 
-	dcache = DataCache(config, data.data)
+	victim = VictimCache(stats, config, data.data)
+
+	dcache = DataCache(config, data.data, victim)
 
 	pagetable = PageTable(config)
 
 	data.print_all()
+
+
+
+
