@@ -183,12 +183,16 @@ class Config:
 
 class TraceData:
 
-	def __init__(self, config):
+	def __init__(self, config, pt):
 		self.data = list()
 
 		"""config to know how many bits for each"""
 
 		self.config = config
+
+		"""page table for physical conversion"""
+
+		self.pt = pt
 
 		"""takes all data from trace_data file and stores it"""
 
@@ -212,7 +216,7 @@ class TraceData:
 
 	def print_all(self):
 		for val in self.data:
-			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", "none", val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
+			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", val.pt_res, val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
 
 	"""function to calculate different values based on shifts"""
 
@@ -222,9 +226,14 @@ class TraceData:
 			self.calc_vp_num(val)
 
 			self.calc_p_offset(val)
+
+			if self.config.virtual_add:
+				# need to do virtual to physical address conversion
+		
+				val.add = self.pt.convert_to_phy(val)
 			
 			# dc
-			
+
 			self.calc_dc_index(val)
 			self.calc_dc_tag(val)
 
@@ -248,9 +257,15 @@ class TraceData:
 		print('{:4x}'.format(p_offset)),
 
 		if self.config.tlb:
-			print('{:6x}{:4x} {:>4} {:>4}'.format(tlb_tag, tlb_ind, tlb_res, pt_res)),
+			print('{:6x}{:4x} {:>4}'.format(tlb_tag, tlb_ind, tlb_res)),
 		else:
-			print('{:>6}{:>4} {:>4} {:>4}'.format("", "", "", "")),
+			print('{:>6}{:>4} {:>4}'.format("", "", "")),
+
+		if self.config.virtual_add:
+			print('{:>4}'.format(pt_res)),
+		else:
+			print('{:>4}'.format("")),
+
 
 		print('{:4x} {:6x} {:3x} {:>4}'.format(p_num, dc_tag, dc_ind, dc_res)),
 
@@ -346,7 +361,7 @@ class TraceData:
 
 	def calc_victim_tag(self, val):
 
-		shift = config.d_cache_offset + config.d_cache_index
+		shift = int(config.set_size_victim)
 
 		mask = sys.maxint
 		mask = mask << shift
@@ -356,6 +371,7 @@ class TraceData:
 		res = res >> shift
 
 		val.victim_tag = res
+
 
 """
 	class for storing each trace data entry
@@ -382,17 +398,21 @@ class TraceLine:
 
 		self.victim_res = "miss"
 
+		self.pt_res = "miss"
+
 """
 	class for data cache entries
 """
 
 class DataCacheEntry:
 
-	def __init__(self, v, tag):
+	def __init__(self, v, tag, vc_tag):
 		self.v = v
 		self.tag = tag
 
 		self.lru = 0
+
+		self.vc_tag = vc_tag
 
 	def __str__(self):
 		return str(str(self.v) + " " + str(self.tag))
@@ -424,7 +444,7 @@ class DataCache:
 			dum = list()
 			
 			for j in xrange(self.assoc):
-				dum.append(DataCacheEntry(0, -1))
+				dum.append(DataCacheEntry(0, -1, -1))
 
 			self.entries.append(dum)
 
@@ -479,13 +499,14 @@ class DataCache:
 		# add evicted number into the victim cache
 
 		if evicted:
-			victim.add_evicted(save.tag)
+			victim.add_evicted(save.vc_tag)
 
 		# found place to replace, must get dc_tag and make sure lru is 0 and v is 1
 
 		d_set[replace_index].v = 1
 		d_set[replace_index].lru = 0
 		d_set[replace_index].tag = cur.dc_tag
+		d_set[replace_index].vc_tag = cur.victim_tag
 
 		# if a block was evicted, store this value in the victim cache
 
@@ -540,7 +561,7 @@ class DataCache:
 	Physical page table class
 """
 
-class PageTable:
+class PhysicalPageTable:
 	def __init__(self, config):
 		self.config = config
 
@@ -549,9 +570,60 @@ class PageTable:
 
 		self.init_table()
 
+	
 	def init_table(self):
 		for i in xrange(int(self.size)):
 			self.pages.append(PhysicalPage())
+
+	# find a page and return the page number
+
+	def find_page(self):
+
+		replace_page, evicted = self.find_index_replace()
+
+		return replace_page, evicted
+
+	"""function to increment all lru values and reset the one that was just used"""
+
+	def inc(self):
+
+		for i in self.pages:
+			if i.v is 1:
+				i.lru = i.lru + 1
+
+
+	"""function to find index of replaceable value in the set"""
+
+	def find_index_replace(self):
+
+		ind = 0
+
+		# look for a spot that is not valid
+
+		for i in self.pages:
+			if i.v is 0:
+				
+				i.v = 1
+
+				return ind, False
+
+			ind += 1
+
+		# find greatest LRU value and return the index of it in the d_set
+
+		max_val = self.pages[0]
+		max_ind = 0
+
+		ind = 0
+
+		for i in self.pages:
+			if i.lru > max_val.lru:
+				max_val = i
+				max_ind = ind
+
+			ind += 1
+
+		return max_ind, True
 
 
 """
@@ -562,8 +634,8 @@ class PageTable:
 
 class PhysicalPage:
 	def __init__(self):
-		self.resident = False
-
+		self.v = 0
+		self.lru = 0
 		self.init_accesses = 0
 
 """
@@ -712,20 +784,133 @@ class Statistics:
 		self.v_miss = 0
 		self.v_hit = 0
 
+		self.pt_hit = 0
+		self.pt_fault = 0
+
+"""
+	virtual page table implementation
+	will take a virtual address and convert it to a physical address
+	with a member funciton
+"""
+
+class PageTable:
+
+	def __init__(self, stats, config):
+
+		self.stats = stats
+
+		self.config = config
+
+		self.size = int(self.config.num_virtual_pages)
+
+		self.entries = list()
+
+		# physical page table
+
+		self.phys_table = PhysicalPageTable(self.config)
+
+		self.init_table()
+
+	def init_table(self):
+
+		for i in xrange(self.size):
+			self.entries.append(PageTableEntry())
+
+	# take the virtual address then see if it has a page table value,
+	# if it doesn't have a value then go to page table and use find a page
+	# to assign to it
+
+	def convert_to_phy(self, add):
+
+		# check if valid entry in vpt
+
+		# store the indexed value
+
+		entry = self.entries[add.vp_num]
+
+		# entry is valid, convert with the physical page instead of the virtual page #
+
+		if entry.v:
+
+			self.phys_table.inc()
+
+			# reset lru for this page number
+
+			self.phys_table.pages[entry.phys_page].lru = 0
+
+			add.pt_res = "hit "
+
+			self.stats.pt_hit += 1
+
+			return self.replace_virtual_num(entry.phys_page, add)
+
+
+		else:
+
+			entry.phys_page, evicted = self.phys_table.find_page()
+
+			# find all virtual pages that have this phys_page and invalidate them
+
+			if evicted:
+				self.invalidate_pages(entry.phys_page)
+
+			entry.v = 1
+
+			self.stats.pt_fault += 1
+
+			return self.replace_virtual_num(entry.phys_page, add)
+
+	"""
+		takes in page and shifts that and XOR's with the address space pertaining to the num
+	"""
+
+	def replace_virtual_num(self, page, add):
+		
+		shift = config.pt_offset
+
+		offset = add.p_offset
+
+		new_add = (page << shift) | offset
+
+		return new_add
+
+	"""
+		takes in phys page number and goes through all pages and invalidates them
+	"""
+
+	def invalidate_pages(self, page_num):
+
+		for i in self.entries:
+			if i.phys_page == page_num:
+				i.v = 0
+
+
+"""
+	virtual page table entry
+"""
+
+class PageTableEntry:
+
+	def __init__(self):
+
+		self.phys_page = -1
+		self.v = 0
+
 
 if __name__ == "__main__":
 	config = Config("trace.config")
 
 	stats = Statistics()
 
-	data = TraceData(config)
+	pagetable = PageTable(stats, config)
+
+	data = TraceData(config, pagetable)
 	data.take_trace()
 
 	victim = VictimCache(stats, config, data.data)
 
 	dcache = DataCache(config, data.data, victim)
 
-	pagetable = PageTable(config)
 
 	data.print_all()
 
