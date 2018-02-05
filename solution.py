@@ -269,14 +269,14 @@ class TraceData:
 		if self.config.virtual_add:
 			print('%6x' % vp_num),
 		else:
-			print('%6s'.format("")),
+			print('%6s' % ("")),
 
 		print('%4x' % p_offset),
 
 		if self.config.tlb:
 			print('%6x%4x %4s' % (tlb_tag, tlb_ind, tlb_res)),
 		else:
-			print('%6x%4x %4s' % ("", "", "")),
+			print('%6s%4s %4s' % ("", "", "")),
 
 
 		if tlb_res == "hit ":
@@ -284,7 +284,7 @@ class TraceData:
 		elif self.config.virtual_add:
 			print('%4s' % pt_res),
 		else:
-			print('%4s' % ""),
+			print('    '),
 
 
 		print('%4x %6x %3x %4s' % (p_num, dc_tag, dc_ind, dc_res)),
@@ -513,7 +513,7 @@ class DataCache:
 
 			res = self.find_in_cache(i)
 
-			if i.type == "write":
+			if i.type == "W":
 				self.stats.total_writes += 1
 			else:
 				self.stats.total_reads += 1
@@ -557,6 +557,9 @@ class DataCache:
 
 		if evicted:
 			victim.add_evicted(save.vc_tag)
+
+		if not in_victim_cache:
+			self.stats.main_mem_ref += 1
 
 		# found place to replace, must get dc_tag and make sure lru is 0 and v is 1
 
@@ -869,33 +872,33 @@ class Statistics:
 
 		print("\nSimulation Statistics\n")
 
-		print('dtlb hits  :' + str(self.tlb_hit))
-		print('dtlb misses  :' + str(self.tlb_miss))
-		print("")
+		print('dtlb hits        : ' + str(self.tlb_hit))
+		print('dtlb misses      : ' + str(self.tlb_miss))
+		print('dtlb hit ratio   : %6.5f\n' % (float(self.tlb_hit)/total))
 
-		print('pt hits  :' + str(self.pt_hit))
-		print('pt misses  :' + str(self.pt_fault))
-		print("")
+		print('pt hits          : ' + str(self.pt_hit))
+		print('pt misses        : ' + str(self.pt_fault))
+		print('pt hit ratio     : %6.5f\n' % (float(self.pt_hit)/total))
 
-		print('dc hits  :' + str(self.dc_hit))
-		print('dc misses  :' + str(self.dc_miss))
-		print("")
+		print('dc hits          : ' + str(self.dc_hit))
+		print('dc misses        : ' + str(self.dc_miss))
+		print('dc hit ratio     : %6.5f\n' % (float(self.dc_hit)/total))
 
-		print('vc hits  :' + str(self.v_hit))
-		print('vc misses  :' + str(self.v_miss))
-		print("")
+		print('vc hits          : ' + str(self.v_hit))
+		print('vc misses        : ' + str(self.v_miss))
+		print('vc hit ratio     : %6.5f\n' % (float(self.v_hit)/total))
 
-		print('L1 hits  :' + str(self.l1_hit))
-		print('L1 misses  :' + str(self.l1_miss))
-		print("")
+		print('L1 hits          : ' + str(self.l1_hit))
+		print('L1 misses        : ' + str(self.l1_miss))
+		print('L1 hit ratio     : %6.5f\n' % (float(self.l1_hit)/total))
 
-		print('Total reads :' + str(self.total_reads))
-		print('Total writes  :' + str(self.total_writes))
-		print("")
+		print('Total reads      : ' + str(self.total_reads))
+		print('Total writes     : ' + str(self.total_writes))
+		print('Ratio of reads   : %6.5f\n' % (float(self.total_reads)/total))
 
-		print('main memory refs :' + str(self.main_mem_ref))
-		print('page table refs :' + str(self.pt_refs))
-		print('disk refs  :' + str(self.disk_refs))
+		print('main memory refs : ' + str(self.main_mem_ref))
+		print('page table refs  : ' + str(self.pt_refs))
+		print('disk refs        : ' + str(self.disk_refs))
 
 """
 	virtual page table implementation
@@ -953,7 +956,8 @@ class PageTable:
 
 			add.pt_res = "hit "
 
-			self.stats.pt_hit += 1
+			if add.tlb_res == "miss":
+				self.stats.pt_hit += 1
 
 			return self.replace_virtual_num(entry.phys_page, add)
 
