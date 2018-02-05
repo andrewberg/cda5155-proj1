@@ -16,30 +16,33 @@ class Config:
 		
 		"""data tlb config"""
 
-		num_sets = 0
-		set_size = 0
+		self.num_sets = 0
+		self.set_size = 0
 
 		"""page table config"""
 
-		num_virtual_pages = 0
-		num_physical_pages = 0
-		page_size = 0
+		self.num_virtual_pages = 0
+		self.num_physical_pages = 0
+		self.page_size = 0
+
+		self.d_cache_index = 0
+
 
 		"""data cache config"""
 
-		num_sets_data = 0
-		set_size_data = 0
-		line_size = 0
+		self.num_sets_data = 0
+		self.set_size_data = 0
+		self.line_size = 0
 
 		"""victim cache config"""
 
-		set_size_victim = 0
+		self.set_size_victim = 0
 
 		"""flags for turning stuff on """
 
-		virtual_add = False
-		tlb = False
-		victim_cache = False
+		self.virtual_add = False
+		self.tlb = False
+		self.victim_cache = False
 
 		self.read_config()
 
@@ -106,17 +109,18 @@ class Config:
 
 		# d-cache calculations
 		
-		self.d_cache_index = int(math.log(float(self.num_sets_data), 2))
-		self.d_cache_offset = int(math.log(float(self.line_size), 2))
+		self.d_cache_index = int(math.log(float(self.num_sets_data))/math.log(2))
+
+		self.d_cache_offset = int(math.log10(float(self.line_size))/math.log10(2))
 
 		# data-tlb calculations
 
-		self.tlb_index = int(math.log(float(self.num_sets), 2))
+		self.tlb_index = int(math.log10(float(self.num_sets))/math.log10(2))
 		
 		# page-table calculations
 
-		self.pt_index = int(math.log(float(self.num_virtual_pages), 2))
-		self.pt_offset = int(math.log(float(self.page_size), 2))
+		self.pt_index = int(math.log10(float(self.num_virtual_pages))/math.log10(2))
+		self.pt_offset = int(math.log10(float(self.page_size))/math.log10(2))
 
 	"""prints each entry into the config file"""
 
@@ -183,7 +187,7 @@ class Config:
 
 class TraceData:
 
-	def __init__(self, config, pt):
+	def __init__(self, config, pt, tlb):
 		self.data = list()
 
 		"""config to know how many bits for each"""
@@ -193,6 +197,8 @@ class TraceData:
 		"""page table for physical conversion"""
 
 		self.pt = pt
+
+		self.tlb = tlb
 
 		"""takes all data from trace_data file and stores it"""
 
@@ -216,7 +222,7 @@ class TraceData:
 
 	def print_all(self):
 		for val in self.data:
-			self.print_line(val.add, val.vp_num, val.p_offset, -1 ,-1, "none", val.pt_res, val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
+			self.print_line(val.add, val.vp_num, val.p_offset, val.tlb_tag, val.tlb_ind, val.tlb_res, val.pt_res, val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
 
 	"""function to calculate different values based on shifts"""
 
@@ -226,6 +232,17 @@ class TraceData:
 			self.calc_vp_num(val)
 
 			self.calc_p_offset(val)
+
+			# tlb calculations
+
+			self.calc_tlb_index(val)
+			self.calc_tlb_tag(val)
+
+			if self.config.tlb:
+
+				# if hit then don't go to pagetable
+
+				val.add = self.tlb.check_tlb(val)
 
 			if self.config.virtual_add:
 				# need to do virtual to physical address conversion
@@ -247,30 +264,33 @@ class TraceData:
 	"""function for printing all data (-1 for values not done yet)"""
 
 	def print_line(self, add, vp_num, p_offset, tlb_tag, tlb_ind, tlb_res, pt_res, p_num, dc_tag, dc_ind, dc_res, vc_tag, vc_res):
-		print('{:08x}'.format(add)),
+		print('%08x' % add),
 
 		if self.config.virtual_add:
-			print('{:6x}'.format(vp_num)),
+			print('%6x' % vp_num),
 		else:
-			print('{:>6}'.format("")),
+			print('%6s'.format("")),
 
-		print('{:4x}'.format(p_offset)),
+		print('%4x' % p_offset),
 
 		if self.config.tlb:
-			print('{:6x}{:4x} {:>4}'.format(tlb_tag, tlb_ind, tlb_res)),
+			print('%6x%4x %4s' % (tlb_tag, tlb_ind, tlb_res)),
 		else:
-			print('{:>6}{:>4} {:>4}'.format("", "", "")),
+			print('%6x%4x %4s' % ("", "", "")),
 
-		if self.config.virtual_add:
-			print('{:>4}'.format(pt_res)),
+
+		if tlb_res == "hit ":
+			print('%4s' % ""),
+		elif self.config.virtual_add:
+			print('%4s' % pt_res),
 		else:
-			print('{:>4}'.format("")),
+			print('%4s' % ""),
 
 
-		print('{:4x} {:6x} {:3x} {:>4}'.format(p_num, dc_tag, dc_ind, dc_res)),
+		print('%4x %6x %3x %4s' % (p_num, dc_tag, dc_ind, dc_res)),
 
 		if self.config.victim_cache:
-			print('{:6x} {:>4}'.format(vc_tag, vc_res))
+			print('%6x %4s' % (vc_tag, vc_res))
 		else:
 			print("")
 
@@ -333,6 +353,27 @@ class TraceData:
 		
 	"""tag for data cache calculation"""
 
+	def calc_tlb_tag(self, val):
+		shift = config.tlb_index
+
+		mask = sys.maxint
+		mask = mask << shift
+
+		res = val.vp_num & mask
+
+		res = res >> shift
+
+		val.tlb_tag = res
+
+	def calc_tlb_index(self, val):
+
+		mask = 2 ** config.tlb_index - 1
+		res = val.vp_num & mask
+
+		val.tlb_ind = res
+		
+	"""tag for data cache calculation"""
+
 	def calc_dc_tag(self, val):
 		shift = config.d_cache_offset + config.d_cache_index
 
@@ -344,6 +385,7 @@ class TraceData:
 		res = res >> shift
 
 		val.dc_tag = res
+
 
 	"""calculates the physical page number based on physical address"""
 
@@ -400,6 +442,10 @@ class TraceLine:
 
 		self.pt_res = "miss"
 
+		self.tlb_tag = -1
+		self.tlb_ind = -1
+		self.tlb_res = "miss"
+
 """
 	class for data cache entries
 """
@@ -423,9 +469,11 @@ class DataCacheEntry:
 
 class DataCache:
 
-	def __init__(self, config, data, victim):
+	def __init__(self, stats, config, data, victim):
 		self.config = config
 		self.data = data
+
+		self.stats = stats
 
 		self.victim = victim
 
@@ -463,7 +511,12 @@ class DataCache:
 
 		for i in self.data:
 
-			res = self.find_in_cache(i) 
+			res = self.find_in_cache(i)
+
+			if i.type == "write":
+				self.stats.total_writes += 1
+			else:
+				self.stats.total_reads += 1
 
 			if res:
 				i.dc_res = "hit "
@@ -488,6 +541,8 @@ class DataCache:
 
 				self.reset_and_inc(d_set, cur.dc_tag)
 
+				stats.dc_hit += 1
+
 				return True
 
 		# if replacing a value in data cache must make the value True
@@ -495,6 +550,8 @@ class DataCache:
 		replace_index, evicted = self.find_index_replace(d_set)
 
 		save = d_set[replace_index]
+
+		stats.dc_miss += 1
 
 		# add evicted number into the victim cache
 
@@ -787,6 +844,59 @@ class Statistics:
 		self.pt_hit = 0
 		self.pt_fault = 0
 
+		self.tlb_hit = 0
+		self.tlb_miss = 0
+
+		self.dc_hit = 0
+		self.dc_miss = 0
+
+		self.l1_hit = 0
+		self.l1_miss = 0
+
+		self.total_reads = 0
+		self.total_writes = 0
+
+		self.main_mem_ref = 0
+		self.pt_refs = 0
+		self.disk_refs = 0
+
+	def print_stats(self):
+
+		total = self.dc_hit + self.dc_miss
+
+		self.l1_hit = self.v_hit + self.dc_hit
+		self.l1_miss = total - self.l1_hit
+
+		print("\nSimulation Statistics\n")
+
+		print('dtlb hits  :' + str(self.tlb_hit))
+		print('dtlb misses  :' + str(self.tlb_miss))
+		print("")
+
+		print('pt hits  :' + str(self.pt_hit))
+		print('pt misses  :' + str(self.pt_fault))
+		print("")
+
+		print('dc hits  :' + str(self.dc_hit))
+		print('dc misses  :' + str(self.dc_miss))
+		print("")
+
+		print('vc hits  :' + str(self.v_hit))
+		print('vc misses  :' + str(self.v_miss))
+		print("")
+
+		print('L1 hits  :' + str(self.l1_hit))
+		print('L1 misses  :' + str(self.l1_miss))
+		print("")
+
+		print('Total reads :' + str(self.total_reads))
+		print('Total writes  :' + str(self.total_writes))
+		print("")
+
+		print('main memory refs :' + str(self.main_mem_ref))
+		print('page table refs :' + str(self.pt_refs))
+		print('disk refs  :' + str(self.disk_refs))
+
 """
 	virtual page table implementation
 	will take a virtual address and convert it to a physical address
@@ -826,6 +936,9 @@ class PageTable:
 
 		# store the indexed value
 
+		if add.tlb_res == "miss":
+			self.stats.pt_refs += 1
+
 		entry = self.entries[add.vp_num]
 
 		# entry is valid, convert with the physical page instead of the virtual page #
@@ -857,6 +970,8 @@ class PageTable:
 			entry.v = 1
 
 			self.stats.pt_fault += 1
+
+			self.stats.disk_refs += 1
 
 			return self.replace_virtual_num(entry.phys_page, add)
 
@@ -896,6 +1011,129 @@ class PageTableEntry:
 		self.phys_page = -1
 		self.v = 0
 
+"""
+	TLB for address conversion
+	valid - v
+	virtual page number
+	physical page number
+"""
+
+class TLB:
+
+	def __init__(self, stats, config):
+		self.config = config
+
+		self.assoc = int(config.set_size)
+		self.size = int(config.num_sets)
+
+		self.entries = []
+
+		self.init_cache()
+
+	def init_cache(self):
+		
+		for i in xrange(self.size):
+			dum = list()
+			
+			for j in xrange(self.assoc):
+				dum.append(TLBEntry())
+
+			self.entries.append(dum)
+
+	"""given an address goes to the index and sees if tag matches"""
+
+	def check_tlb(self, entry):
+		
+		cur = entry
+
+		line = self.entries[cur.tlb_ind]
+
+		for i in line:
+			if i.v is 1 and cur.tlb_tag == i.tag:
+
+				# if is valid and tag matches, reset and inc other lru's
+
+				cur.tlb_res = "hit "
+
+				stats.tlb_hit += 1
+				
+				self.reset_and_inc(line, cur.tlb_tag)
+
+				return True
+
+		# if not TLB bring it in and remove other value
+
+		cur.tlb_res = "miss"
+
+		stats.tlb_miss += 1
+
+		replace_index, evicted = self.find_index_replace(line)
+
+		line[replace_index].v = 1
+		line[replace_index].lru = 0
+		line[replace_index].tag = cur.tlb_tag
+		line[replace_index].v_page = cur.vp_num
+
+		return False
+
+	"""function to increment all lru values and reset the one that was just used"""
+
+	def reset_and_inc(self, d_set, reset):
+
+		for i in d_set:
+			if i.v is 1:
+				if i.tag is reset:
+					i.lru = 0
+				else:
+					i.lru = i.lru + 1
+
+
+	"""function to find index of replaceable value in the set"""
+
+	def find_index_replace(self, d_set):
+
+		ind = 0
+
+		# look for a spot that is not valid
+
+		for i in d_set:
+			if i.v is 0:
+				
+				i.v = 1
+
+				return ind, False
+
+			ind += 1
+
+		# find greatest LRU value and return the index of it in the d_set
+
+		max_val = d_set[0]
+		max_ind = 0
+
+		ind = 0
+
+		for i in d_set:
+			if i.lru > max_val.lru:
+				max_val = i
+				max_ind = ind
+
+			ind += 1
+
+		return max_ind, True
+
+"""
+	class for TLBEntry
+"""
+
+class TLBEntry:
+
+	def __init__(self):
+
+		self.v = 0
+		self.tag = -1
+		self.v_page = -1
+		self.phys_page = -1
+
 
 if __name__ == "__main__":
 	config = Config("trace.config")
@@ -904,15 +1142,19 @@ if __name__ == "__main__":
 
 	pagetable = PageTable(stats, config)
 
-	data = TraceData(config, pagetable)
+	tlb = TLB(stats, config)
+
+	data = TraceData(config, pagetable, tlb)
 	data.take_trace()
 
 	victim = VictimCache(stats, config, data.data)
 
-	dcache = DataCache(config, data.data, victim)
+	dcache = DataCache(stats, config, data.data, victim)
 
 
 	data.print_all()
+
+	stats.print_stats()
 
 
 
