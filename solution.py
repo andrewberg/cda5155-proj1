@@ -403,16 +403,16 @@ class TraceData:
 
 	def calc_victim_tag(self, val):
 
-		shift = int(config.set_size_victim)
-
-		mask = sys.maxint
-		mask = mask << shift
-
+		# calculate size of the p_num
+		size = config.d_cache_offset
+		
+		mask = 2 ** 32 - 1
+		mask = mask << size
+		
 		res = val.add & mask
 
-		res = res >> shift
-
-		val.victim_tag = res
+		
+		val.victim_tag = res >> size
 
 
 """
@@ -924,9 +924,13 @@ class Statistics:
 
 class PageTable:
 
-	def __init__(self, stats, config):
+	def __init__(self, stats, config, dc, vc):
 
 		self.stats = stats
+
+		self.dc = dc
+
+		self.vc = vc
 
 		self.config = config
 
@@ -1018,6 +1022,7 @@ class PageTable:
 		for i in self.entries:
 			if i.phys_page == page_num:
 				i.v = 0
+
 
 
 """
