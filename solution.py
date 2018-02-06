@@ -131,7 +131,7 @@ class Config:
 		print("Data TLB contains " + self.num_sets + " sets.")
 		print("Each set contains " + self.set_size + " entries.")
 		"""TODO:"""
-		print("Number of bits used for the index is " + str(self.tlb_index) + ". \n")
+		print("Number of bits used for the index is " + str(self.tlb_index) + ".\n")
 
 		# page table info
 		
@@ -146,7 +146,7 @@ class Config:
 		
 		print("D-cache contains " + str(self.num_sets_data) + " sets.")
 		print("Each set contains " + str(self.set_size_data) + " entries.")
-		print("Each line is " + self.line_size + " sets.")
+		print("Each line is " + self.line_size + " bytes.")
 		print("Number of bits used for the index is "+ str(self.d_cache_index) + ".")
 		print("Number of bits used for the offset is " + str(self.d_cache_offset) + ".")
 		print("")
@@ -173,10 +173,10 @@ class Config:
 
 	def print_header(self):
 		if self.virtual_add:
-			print("Virtual  Virt.\tPage TLB    TLB TLB  PT   Phys\t      DC  DC\t      VC")
+			print("Virtual  Virt.  Page TLB    TLB TLB  PT   Phys          DC  DC        VC")
 		else:
-			print("Physical Virt.\tPage TLB    TLB TLB  PT   Phys\t      DC  DC\t      VC")
-		print("Address  Page #\tOff  Tag    Ind Res. Res. Pg # DC Tag Ind Res. VC Tag Res.")
+			print("Physical Virt.  Page TLB    TLB TLB  PT   Phys        DC  DC          VC")
+		print("Address  Page # Off  Tag    Ind Res. Res. Pg # DC Tag Ind Res. VC Tag Res.")
 		print("-------- ------ ---- ------ --- ---- ---- ---- ------ --- ---- ------ ----")
 
 		#print('{:08x} {:6x} {:4x} {:6x}{:4x} {:>4} {:>4} {:4x} {:6x} {:3x} {:>4} {:6x} {:>4}'.format(0xc84, 0xc, 0x84, 0x6, 0x0, "miss", "miss", 0x0, 0x2, 0x0, "miss", 0x8, "miss"))
@@ -222,7 +222,7 @@ class TraceData:
 
 	def print_all(self):
 		for val in self.data:
-			self.print_line(val.add, val.vp_num, val.p_offset, val.tlb_tag, val.tlb_ind, val.tlb_res, val.pt_res, val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
+			self.print_line(val.v_add, val.vp_num, val.p_offset, val.tlb_tag, val.tlb_ind, val.tlb_res, val.pt_res, val.physical_page, val.dc_tag, val.dc_index, val.dc_res, val.victim_tag, val.victim_res)
 
 	"""function to calculate different values based on shifts"""
 
@@ -424,6 +424,8 @@ class TraceLine:
 	def __init__(self, t, add):
 		self.type = t
 		self.add = int(add, 16)
+
+		self.v_add = self.add
 
 		self.vp_num = -1
 		self.p_offset = -1
@@ -840,7 +842,10 @@ class VictimCache:
 
 class Statistics:
 
-	def __init__(self):
+	def __init__(self, config):
+
+		self.config = config
+
 		self.v_miss = 0
 		self.v_hit = 0
 
@@ -870,31 +875,42 @@ class Statistics:
 		self.l1_hit = self.v_hit + self.dc_hit
 		self.l1_miss = total - self.l1_hit
 
-		print("\nSimulation Statistics\n")
+		print("\n\nSimulation statistics\n")
 
 		print('dtlb hits        : ' + str(self.tlb_hit))
 		print('dtlb misses      : ' + str(self.tlb_miss))
-		print('dtlb hit ratio   : %6.5f\n' % (float(self.tlb_hit)/total))
+		if config.tlb:
+			print('dtlb hit ratio   : %6.6f\n' % (float(self.tlb_hit)/total))
+		else:
+			print('dtlb hit ratio   : N/A\n')
+
+
 
 		print('pt hits          : ' + str(self.pt_hit))
-		print('pt misses        : ' + str(self.pt_fault))
-		print('pt hit ratio     : %6.5f\n' % (float(self.pt_hit)/total))
+		print('pt faults        : ' + str(self.pt_fault))
+		if config.virtual_add:
+			print('pt hit ratio     : %6.6f\n' % (float(self.pt_hit)/total))
+		else:
+			print('pt hit ratio     : N/A\n')
 
 		print('dc hits          : ' + str(self.dc_hit))
 		print('dc misses        : ' + str(self.dc_miss))
-		print('dc hit ratio     : %6.5f\n' % (float(self.dc_hit)/total))
+		print('dc hit ratio     : %6.6f\n' % (float(self.dc_hit)/total))
 
 		print('vc hits          : ' + str(self.v_hit))
 		print('vc misses        : ' + str(self.v_miss))
-		print('vc hit ratio     : %6.5f\n' % (float(self.v_hit)/total))
+		if config.victim_cache:
+			print('vc hit ratio     : %6.6f\n' % (float(self.v_hit)/total))
+		else:
+			print('vc hit ratio     : N/A\n')
 
 		print('L1 hits          : ' + str(self.l1_hit))
 		print('L1 misses        : ' + str(self.l1_miss))
-		print('L1 hit ratio     : %6.5f\n' % (float(self.l1_hit)/total))
+		print('L1 hit ratio     : %6.6f\n' % (float(self.l1_hit)/total))
 
 		print('Total reads      : ' + str(self.total_reads))
 		print('Total writes     : ' + str(self.total_writes))
-		print('Ratio of reads   : %6.5f\n' % (float(self.total_reads)/total))
+		print('Ratio of reads   : %6.6f\n' % (float(self.total_reads)/total))
 
 		print('main memory refs : ' + str(self.main_mem_ref))
 		print('page table refs  : ' + str(self.pt_refs))
@@ -1142,7 +1158,7 @@ class TLBEntry:
 if __name__ == "__main__":
 	config = Config("trace.config")
 
-	stats = Statistics()
+	stats = Statistics(config)
 
 	pagetable = PageTable(stats, config)
 
