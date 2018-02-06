@@ -173,7 +173,7 @@ class Config:
 
 	def print_header(self):
 		if self.virtual_add:
-			print("Virtual  Virt.  Page TLB    TLB TLB  PT   Phys          DC  DC        VC")
+			print("Virtual  Virt.  Page TLB    TLB TLB  PT   Phys        DC  DC          VC")
 		else:
 			print("Physical Virt.  Page TLB    TLB TLB  PT   Phys        DC  DC          VC")
 		print("Address  Page # Off  Tag    Ind Res. Res. Pg # DC Tag Ind Res. VC Tag Res.")
@@ -227,6 +227,8 @@ class TraceData:
 	"""function to calculate different values based on shifts"""
 
 	def calculate_all(self):
+		i = 0
+
 		for val in self.data:
 
 			self.calc_vp_num(val)
@@ -259,6 +261,8 @@ class TraceData:
 			# victim cache
 
 			self.calc_victim_tag(val)
+
+			i += 1
 
 
 	"""function for printing all data (-1 for values not done yet)"""
@@ -889,7 +893,7 @@ class Statistics:
 		print('pt hits          : ' + str(self.pt_hit))
 		print('pt faults        : ' + str(self.pt_fault))
 		if config.virtual_add:
-			print('pt hit ratio     : %6.6f\n' % (float(self.pt_hit)/total))
+			print('pt hit ratio     : %6.6f\n' % (float(self.pt_hit)/(self.pt_hit+self.pt_fault)))
 		else:
 			print('pt hit ratio     : N/A\n')
 
@@ -924,13 +928,9 @@ class Statistics:
 
 class PageTable:
 
-	def __init__(self, stats, config, dc, vc):
+	def __init__(self, stats, config):
 
 		self.stats = stats
-
-		self.dc = dc
-
-		self.vc = vc
 
 		self.config = config
 
@@ -943,6 +943,8 @@ class PageTable:
 		self.phys_table = PhysicalPageTable(self.config)
 
 		self.init_table()
+
+		self.invalid = list()
 
 	def init_table(self):
 
@@ -990,6 +992,7 @@ class PageTable:
 
 			if evicted:
 				self.invalidate_pages(entry.phys_page)
+
 
 			entry.v = 1
 
